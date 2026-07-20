@@ -846,7 +846,7 @@ void RenderUI(AppState& state) {
                 ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "Detalles de Relación Seleccionada: %s -> %s", tm.tableA.c_str(), tm.tableB.c_str());
                 
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.10f, 0.18f, 0.40f));
-                ImGui::BeginChild("RelationDetails", ImVec2(-1, 80), true);
+                ImGui::BeginChild("RelationDetails", ImVec2(-1, 140), true);
                 
                 if (tm.columns.empty()) {
                     ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No hay columnas conectadas para esta tabla en la pestaña de Mapeo.");
@@ -890,14 +890,14 @@ void RenderUI(AppState& state) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.00f, 0.65f, 0.25f, 1.00f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.00f, 0.75f, 0.30f, 1.00f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.55f, 0.20f, 1.00f));
-                if (ImGui::Button("REPLIX: ACTIVO", ImVec2(220, 45))) {
+                if (ImGui::Button("REPLIX: ACTIVO", ImVec2(180, 32))) {
                     state.syncEngine.stopSession(session.name);
                 }
                 ImGui::PopStyleColor(3);
                 ImGui::SameLine();
                 
                 ImGui::BeginGroup();
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10.0f);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.0f);
                 DrawSpinner("replixSpinner", 10.0f, 2.5f, ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 0.35f, 1.00f)));
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(0.00f, 0.85f, 0.35f, 1.00f), "Sincronizando...");
@@ -907,12 +907,12 @@ void RenderUI(AppState& state) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.20f, 0.25f, 1.00f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.30f, 1.00f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.15f, 0.20f, 1.00f));
-                if (ImGui::Button("ACTIVAR REPLIX", ImVec2(220, 45))) {
+                if (ImGui::Button("ACTIVAR REPLIX", ImVec2(180, 32))) {
                     state.syncEngine.startSession(session.name);
                 }
                 ImGui::PopStyleColor(3);
                 ImGui::SameLine();
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6.0f);
                 ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Servicio en Pausa");
             }
 
@@ -924,12 +924,12 @@ void RenderUI(AppState& state) {
             
             if (state.migratingData) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
-                ImGui::Button("MIGRANDO DATOS...", ImVec2(220, 45));
+                ImGui::Button("MIGRANDO DATOS...", ImVec2(180, 32));
                 ImGui::PopStyleColor();
                 ImGui::SameLine();
                 
                 ImGui::BeginGroup();
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10.0f);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.0f);
                 DrawSpinner("migratingSpinner", 10.0f, 2.5f, ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 1.00f)));
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "Migrando...");
@@ -938,7 +938,7 @@ void RenderUI(AppState& state) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.20f, 1.00f, 1.00f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.30f, 1.00f, 1.00f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.50f, 0.15f, 0.90f, 1.00f));
-                if (ImGui::Button("MIGRAR DATOS AHORA", ImVec2(220, 45))) {
+                if (ImGui::Button("MIGRAR DATOS AHORA", ImVec2(180, 32))) {
                     state.migratingData = true;
                     // Run manual migration process in background thread
                     std::thread([&state, session]() mutable {
