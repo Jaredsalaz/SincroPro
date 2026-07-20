@@ -70,6 +70,7 @@ struct AppState {
     bool dbBLoading = false;
     std::string connectionErrorMsg = "";
     bool triggerErrorPopup = false;
+    bool migratingData = false;
 };
 
 // Premium Glassmorphic Styling
@@ -446,292 +447,431 @@ void RenderUI(AppState& state) {
 
     ImGui::Spacing();
 
-    // 3 Column Visual Sync Mapper Layout
-    float colWidth = (windowWidth - 300.0f - 40.0f) / 3.0f;
-    float panelsHeight = std::max(150.0f, windowHeight - 340.0f);
-    
-    // Panel 1: Left Database A Browser
-    ImGui::BeginChild("PanelLeft", ImVec2(colWidth, panelsHeight), true);
-    ImGui::TextColored(ImVec4(0.60f, 0.20f, 1.00f, 1.00f), "BD A (ORIGEN)");
-    
-    if (state.dbALoading) {
-        ImGui::Text("Estado: Cargando...");
-        ImGui::Spacing();
-        DrawSpinner("spinnerA", 15.0f, 3.0f, ImGui::GetColorU32(ImVec4(0.60f, 0.20f, 1.00f, 1.00f)));
-        ImGui::TextWrapped("Cargando esquema de la BD A...");
-    } else {
-        ImGui::Text(state.dbAConnected ? "Estado: Conectado" : "Estado: Desconectado");
+    // Start workspace views tab bar
+    if (ImGui::BeginTabBar("WorkspaceTabBar")) {
         
-        ImGui::InputTextWithHint("##filterA", "Buscar tabla...", state.filterTableA, IM_ARRAYSIZE(state.filterTableA));
-        ImGui::Separator();
-        
-        std::string searchFilterA = state.filterTableA;
-        std::transform(searchFilterA.begin(), searchFilterA.end(), searchFilterA.begin(), ::tolower);
-
-        for (const auto& t : state.tablesA) {
-            std::string tableLower = t;
-            std::transform(tableLower.begin(), tableLower.end(), tableLower.begin(), ::tolower);
-            if (!searchFilterA.empty() && tableLower.find(searchFilterA) == std::string::npos) {
-                continue;
-            }
-
-            bool isSelected = (state.selectedTableA == t);
-            if (ImGui::Selectable(t.c_str(), isSelected)) {
-                state.selectedTableA = t;
-                state.activeSourceCol = ""; // Reset selected col mapping
-            }
-        }
-    }
-    ImGui::EndChild();
-
-    ImGui::SameLine();
-
-    // Panel 2: Center Mapping Config / Connection Lines Workspace
-    ImGui::BeginChild("PanelCenter", ImVec2(colWidth, panelsHeight), true);
-    ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "MAPEO Y RELACIONES");
-    
-    if (state.selectedTableA.empty() || state.selectedTableB.empty()) {
-        ImGui::TextWrapped("Selecciona una tabla origen (izquierda) y destino (derecha) para crear mapeo.");
-    } else {
-        ImGui::Text("Origen: %s", state.selectedTableA.c_str());
-        ImGui::Text("Destino: %s", state.selectedTableB.c_str());
-        
-        // Find existing mapping or prepare details to create one
-        int mappingIdx = -1;
-        for (int i = 0; i < (int)session.mappings.size(); ++i) {
-            if (session.mappings[i].tableA == state.selectedTableA && session.mappings[i].tableB == state.selectedTableB) {
-                mappingIdx = i;
-                break;
-            }
-        }
-
-        if (mappingIdx == -1) {
-            if (ImGui::Button("Registrar Relacion de Tabla", ImVec2(-1, 0))) {
-                TableMapping newMap;
-                newMap.tableA = state.selectedTableA;
-                newMap.tableB = state.selectedTableB;
-                newMap.direction = "A_TO_B";
-                newMap.idGenerator = false;
-                
-                session.mappings.push_back(newMap);
-                state.syncEngine.updateSession(session.name, session);
-                mappingIdx = (int)session.mappings.size() - 1;
-            }
-        }
-
-        if (mappingIdx != -1) {
-            auto& tm = session.mappings[mappingIdx];
+        // TAB 1: VISUAL SCHEMA MAPPER
+        if (ImGui::BeginTabItem("Configuración de Mapeo")) {
+            float colWidth = (windowWidth - 300.0f - 40.0f) / 3.0f;
+            float panelsHeight = std::max(150.0f, windowHeight - 390.0f);
             
-            ImGui::Checkbox("Esta Tabla Genera IDs/GUIDs", &tm.idGenerator);
-            ImGui::SameLine();
-            if (ImGui::Button("Eliminar Mapeo", ImVec2(-1, 0))) {
-                session.mappings.erase(session.mappings.begin() + mappingIdx);
-                state.syncEngine.updateSession(session.name, session);
-                mappingIdx = -1;
-            }
-
-            if (mappingIdx != -1) {
-                ImGui::Separator();
-                ImGui::Text("Conexiones de Columnas:");
+            // Panel 1: Left Database A Browser
+            ImGui::BeginChild("PanelLeft", ImVec2(colWidth, panelsHeight), true);
+            ImGui::TextColored(ImVec4(0.60f, 0.20f, 1.00f, 1.00f), "BD A (ORIGEN)");
+            
+            if (state.dbALoading) {
+                ImGui::Text("Estado: Cargando...");
+                ImGui::Spacing();
+                DrawSpinner("spinnerA", 15.0f, 3.0f, ImGui::GetColorU32(ImVec4(0.60f, 0.20f, 1.00f, 1.00f)));
+                ImGui::TextWrapped("Cargando esquema de la BD A...");
+            } else {
+                ImGui::Text(state.dbAConnected ? "Estado: Conectado" : "Estado: Desconectado");
                 
-                // Clear sockets cache for drawing lines
-                state.leftSockets.clear();
-                state.rightSockets.clear();
-
-                // Left columns list
-                ImGui::Columns(2, "colsMappers", false);
-                ImGui::Text("Columna BD A");
+                ImGui::InputTextWithHint("##filterA", "Buscar tabla...", state.filterTableA, IM_ARRAYSIZE(state.filterTableA));
                 ImGui::Separator();
+                
+                std::string searchFilterA = state.filterTableA;
+                std::transform(searchFilterA.begin(), searchFilterA.end(), searchFilterA.begin(), ::tolower);
 
-                auto itColsA = state.colsA.find(tm.tableA);
-                if (itColsA != state.colsA.end()) {
-                    for (const auto& col : itColsA->second) {
-                        bool isSelected = (state.activeSourceCol == col.first);
-                        ImGui::PushID(("src_" + col.first).c_str());
-                        
-                        std::string label = col.first + " (" + col.second + ")";
-                        if (ImGui::Selectable(label.c_str(), isSelected)) {
-                            state.activeSourceCol = col.first;
-                        }
-                        
-                        // Register socket position
-                        ImVec2 textPos = ImGui::GetCursorScreenPos();
-                        SocketPos sp;
-                        sp.pos = ImVec2(textPos.x + ImGui::GetColumnWidth() - 10, textPos.y - ImGui::GetTextLineHeight() * 0.5f);
-                        sp.colName = col.first;
-                        state.leftSockets.push_back(sp);
+                for (const auto& t : state.tablesA) {
+                    std::string tableLower = t;
+                    std::transform(tableLower.begin(), tableLower.end(), tableLower.begin(), ::tolower);
+                    if (!searchFilterA.empty() && tableLower.find(searchFilterA) == std::string::npos) {
+                        continue;
+                    }
 
-                        ImGui::PopID();
+                    bool isSelected = (state.selectedTableA == t);
+                    if (ImGui::Selectable(t.c_str(), isSelected)) {
+                        state.selectedTableA = t;
+                        state.activeSourceCol = ""; // Reset selected col mapping
+                    }
+                }
+            }
+            ImGui::EndChild();
+
+            ImGui::SameLine();
+
+            // Panel 2: Center Mapping Config / Connection Lines Workspace
+            ImGui::BeginChild("PanelCenter", ImVec2(colWidth, panelsHeight), true);
+            ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "MAPEO Y RELACIONES");
+            
+            if (state.selectedTableA.empty() || state.selectedTableB.empty()) {
+                ImGui::TextWrapped("Selecciona una tabla origen (izquierda) y destino (derecha) para crear mapeo.");
+            } else {
+                ImGui::Text("Origen: %s", state.selectedTableA.c_str());
+                ImGui::Text("Destino: %s", state.selectedTableB.c_str());
+                
+                // Find existing mapping or prepare details to create one
+                int mappingIdx = -1;
+                for (int i = 0; i < (int)session.mappings.size(); ++i) {
+                    if (session.mappings[i].tableA == state.selectedTableA && session.mappings[i].tableB == state.selectedTableB) {
+                        mappingIdx = i;
+                        break;
                     }
                 }
 
-                // Right columns list
-                ImGui::NextColumn();
-                ImGui::Text("Columna BD B");
-                ImGui::Separator();
-
-                auto itColsB = state.colsB.find(tm.tableB);
-                if (itColsB != state.colsB.end()) {
-                    for (const auto& col : itColsB->second) {
-                        bool isSelected = (state.activeTargetCol == col.first);
-                        ImGui::PushID(("dst_" + col.first).c_str());
+                if (mappingIdx == -1) {
+                    if (ImGui::Button("Registrar Relacion de Tabla", ImVec2(-1, 0))) {
+                        TableMapping newMap;
+                        newMap.tableA = state.selectedTableA;
+                        newMap.tableB = state.selectedTableB;
+                        newMap.direction = "A_TO_B";
+                        newMap.idGenerator = false;
                         
-                        std::string label = col.first + " (" + col.second + ")";
-                        if (ImGui::Selectable(label.c_str(), isSelected)) {
-                            state.activeTargetCol = col.first;
-                        }
-
-                        // Register socket position
-                        ImVec2 textPos = ImGui::GetCursorScreenPos();
-                        SocketPos sp;
-                        sp.pos = ImVec2(textPos.x + 10, textPos.y - ImGui::GetTextLineHeight() * 0.5f);
-                        sp.colName = col.first;
-                        state.rightSockets.push_back(sp);
-
-                        ImGui::PopID();
+                        session.mappings.push_back(newMap);
+                        state.syncEngine.updateSession(session.name, session);
+                        mappingIdx = (int)session.mappings.size() - 1;
                     }
                 }
-                ImGui::Columns(1);
 
-                // Relate button
+                if (mappingIdx != -1) {
+                    auto& tm = session.mappings[mappingIdx];
+                    
+                    ImGui::Checkbox("Esta Tabla Genera IDs/GUIDs", &tm.idGenerator);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Eliminar Mapeo", ImVec2(-1, 0))) {
+                        session.mappings.erase(session.mappings.begin() + mappingIdx);
+                        state.syncEngine.updateSession(session.name, session);
+                        mappingIdx = -1;
+                    }
+
+                    if (mappingIdx != -1) {
+                        ImGui::Separator();
+                        ImGui::Text("Conexiones de Columnas:");
+                        
+                        // Clear sockets cache for drawing lines
+                        state.leftSockets.clear();
+                        state.rightSockets.clear();
+
+                        // Left columns list
+                        ImGui::Columns(2, "colsMappers", false);
+                        ImGui::Text("Columna BD A");
+                        ImGui::Separator();
+
+                        auto itColsA = state.colsA.find(tm.tableA);
+                        if (itColsA != state.colsA.end()) {
+                            for (const auto& col : itColsA->second) {
+                                bool isSelected = (state.activeSourceCol == col.first);
+                                ImGui::PushID(("src_" + col.first).c_str());
+                                
+                                std::string label = col.first + " (" + col.second + ")";
+                                if (ImGui::Selectable(label.c_str(), isSelected)) {
+                                    state.activeSourceCol = col.first;
+                                }
+                                
+                                // Register socket position
+                                ImVec2 textPos = ImGui::GetCursorScreenPos();
+                                SocketPos sp;
+                                sp.pos = ImVec2(textPos.x + ImGui::GetColumnWidth() - 10, textPos.y - ImGui::GetTextLineHeight() * 0.5f);
+                                sp.colName = col.first;
+                                state.leftSockets.push_back(sp);
+
+                                ImGui::PopID();
+                            }
+                        }
+
+                        // Right columns list
+                        ImGui::NextColumn();
+                        ImGui::Text("Columna BD B");
+                        ImGui::Separator();
+
+                        auto itColsB = state.colsB.find(tm.tableB);
+                        if (itColsB != state.colsB.end()) {
+                            for (const auto& col : itColsB->second) {
+                                bool isSelected = (state.activeTargetCol == col.first);
+                                ImGui::PushID(("dst_" + col.first).c_str());
+                                
+                                std::string label = col.first + " (" + col.second + ")";
+                                if (ImGui::Selectable(label.c_str(), isSelected)) {
+                                    state.activeTargetCol = col.first;
+                                }
+
+                                // Register socket position
+                                ImVec2 textPos = ImGui::GetCursorScreenPos();
+                                SocketPos sp;
+                                sp.pos = ImVec2(textPos.x + 10, textPos.y - ImGui::GetTextLineHeight() * 0.5f);
+                                sp.colName = col.first;
+                                state.rightSockets.push_back(sp);
+
+                                ImGui::PopID();
+                            }
+                        }
+                        ImGui::Columns(1);
+
+                        // Relate button
+                        ImGui::Separator();
+                        if (!state.activeSourceCol.empty() && !state.activeTargetCol.empty()) {
+                            if (ImGui::Button("Establecer Relacion (Conectar)", ImVec2(-1, 0))) {
+                                // Check if column already mapped
+                                bool found = false;
+                                for (auto& colMap : tm.columns) {
+                                    if (colMap.colA == state.activeSourceCol) {
+                                        colMap.colB = state.activeTargetCol;
+                                        found = true;
+                                        break;
+                                    }
+                                }
+
+                                if (!found) {
+                                    ColumnMapping cm;
+                                    cm.colA = state.activeSourceCol;
+                                    cm.colB = state.activeTargetCol;
+                                    cm.isKey = (state.activeSourceCol == "id" || state.activeSourceCol == "id_cliente" || state.activeSourceCol == "id_item" || state.activeSourceCol == "id_trx");
+                                    cm.translateViaTable = "";
+                                    tm.columns.push_back(cm);
+                                }
+
+                                state.syncEngine.updateSession(session.name, session);
+                                state.activeSourceCol = "";
+                                state.activeTargetCol = "";
+                            }
+                        } else {
+                            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Selecciona una columna izquierda y derecha para conectar");
+                        }
+
+                        // Render current mappings settings list below
+                        ImGui::Separator();
+                        ImGui::Text("Mapeos Activos:");
+                        for (size_t k = 0; k < tm.columns.size(); ++k) {
+                            auto& colMap = tm.columns[k];
+                            ImGui::PushID(static_cast<int>(k));
+                            
+                            ImGui::Text("%s -> %s", colMap.colA.c_str(), colMap.colB.c_str());
+                            
+                            ImGui::SameLine(ImGui::GetWindowWidth() - 200);
+                            ImGui::Checkbox("Llave", &colMap.isKey);
+                            
+                            ImGui::SameLine(ImGui::GetWindowWidth() - 100);
+                            if (ImGui::Button("Borrar")) {
+                                tm.columns.erase(tm.columns.begin() + k);
+                                state.syncEngine.updateSession(session.name, session);
+                                ImGui::PopID();
+                                break;
+                            }
+
+                            // Setup ID translation dictionary reference
+                            char transTable[128] = "";
+                            strcpy(transTable, colMap.translateViaTable.c_str());
+                            ImGui::SetNextItemWidth(150);
+                            if (ImGui::InputText("Traductor ID", transTable, IM_ARRAYSIZE(transTable))) {
+                                colMap.translateViaTable = transTable;
+                                state.syncEngine.updateSession(session.name, session);
+                            }
+                            ImGui::PopID();
+                        }
+                    }
+                }
+            }
+            ImGui::EndChild();
+
+            ImGui::SameLine();
+
+            // Panel 3: Right Database B Browser
+            ImGui::BeginChild("PanelRight", ImVec2(colWidth, panelsHeight), true);
+            ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "BD B (DESTINO)");
+            
+            if (state.dbBLoading) {
+                ImGui::Text("Estado: Cargando...");
+                ImGui::Spacing();
+                DrawSpinner("spinnerB", 15.0f, 3.0f, ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 1.00f)));
+                ImGui::TextWrapped("Cargando esquema de la BD B...");
+            } else {
+                ImGui::Text(state.dbBConnected ? "Estado: Conectado" : "Estado: Desconectado");
+                
+                ImGui::InputTextWithHint("##filterB", "Buscar tabla...", state.filterTableB, IM_ARRAYSIZE(state.filterTableB));
                 ImGui::Separator();
-                if (!state.activeSourceCol.empty() && !state.activeTargetCol.empty()) {
-                    if (ImGui::Button("Establecer Relacion (Conectar)", ImVec2(-1, 0))) {
-                        // Check if column already mapped
-                        bool found = false;
-                        for (auto& colMap : tm.columns) {
-                            if (colMap.colA == state.activeSourceCol) {
-                                colMap.colB = state.activeTargetCol;
-                                found = true;
+                
+                std::string searchFilterB = state.filterTableB;
+                std::transform(searchFilterB.begin(), searchFilterB.end(), searchFilterB.begin(), ::tolower);
+
+                for (const auto& t : state.tablesB) {
+                    std::string tableLower = t;
+                    std::transform(tableLower.begin(), tableLower.end(), tableLower.begin(), ::tolower);
+                    if (!searchFilterB.empty() && tableLower.find(searchFilterB) == std::string::npos) {
+                        continue;
+                    }
+
+                    bool isSelected = (state.selectedTableB == t);
+                    if (ImGui::Selectable(t.c_str(), isSelected)) {
+                        state.selectedTableB = t;
+                        state.activeTargetCol = ""; // Reset selected col mapping
+                    }
+                }
+            }
+            ImGui::EndChild();
+
+            // Dynamic Bézier connection lines rendering in background of columns
+            if (!state.selectedTableA.empty() && !state.selectedTableB.empty()) {
+                int mappingIdx = -1;
+                for (int i = 0; i < (int)session.mappings.size(); ++i) {
+                    if (session.mappings[i].tableA == state.selectedTableA && session.mappings[i].tableB == state.selectedTableB) {
+                        mappingIdx = i;
+                        break;
+                    }
+                }
+
+                if (mappingIdx != -1) {
+                    const auto& tm = session.mappings[mappingIdx];
+                    for (const auto& colMap : tm.columns) {
+                        ImVec2 start(0, 0), end(0, 0);
+                        bool startFound = false, endFound = false;
+
+                        for (const auto& socket : state.leftSockets) {
+                            if (socket.colName == colMap.colA) {
+                                start = socket.pos;
+                                startFound = true;
+                                break;
+                            }
+                        }
+                        for (const auto& socket : state.rightSockets) {
+                            if (socket.colName == colMap.colB) {
+                                end = socket.pos;
+                                endFound = true;
                                 break;
                             }
                         }
 
-                        if (!found) {
-                            ColumnMapping cm;
-                            cm.colA = state.activeSourceCol;
-                            cm.colB = state.activeTargetCol;
-                            cm.isKey = (state.activeSourceCol == "id" || state.activeSourceCol == "id_cliente" || state.activeSourceCol == "id_item" || state.activeSourceCol == "id_trx");
-                            cm.translateViaTable = "";
-                            tm.columns.push_back(cm);
+                        if (startFound && endFound) {
+                            bool selected = (state.activeSourceCol == colMap.colA || state.activeTargetCol == colMap.colB);
+                            DrawMappingConnection(start, end, selected);
                         }
-
-                        state.syncEngine.updateSession(session.name, session);
-                        state.activeSourceCol = "";
-                        state.activeTargetCol = "";
                     }
-                } else {
-                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Selecciona una columna izquierda y derecha para conectar");
                 }
+            }
+            ImGui::EndTabItem();
+        }
 
-                // Render current mappings settings list below
-                ImGui::Separator();
-                ImGui::Text("Mapeos Activos:");
-                for (size_t k = 0; k < tm.columns.size(); ++k) {
-                    auto& colMap = tm.columns[k];
-                    ImGui::PushID(static_cast<int>(k));
+        // TAB 2: REPLIX MONITOR & MIGRATION CONSOLE
+        if (ImGui::BeginTabItem("Consola y Réplica de Datos")) {
+            float panelsHeight = std::max(150.0f, windowHeight - 390.0f);
+            
+            ImGui::BeginChild("ReplixPanelArea", ImVec2(-1, panelsHeight), true);
+            
+            // Graphic Schema Relations Map
+            ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "DIAGRAMA DE FLUJO DE RELACIONES:");
+            
+            ImGui::BeginChild("RelationsCanvas", ImVec2(-1, 160), true, ImGuiWindowFlags_HorizontalScrollbar);
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            ImVec2 cursor = ImGui::GetCursorScreenPos();
+            
+            float cardWidth = 190.0f;
+            float cardHeight = 36.0f;
+            float gapY = 46.0f;
+
+            if (session.mappings.empty()) {
+                ImGui::SetCursorPos(ImVec2(15.0f, 60.0f));
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No hay tablas mapeadas en esta sesion. Configura relaciones en la primera pestaña.");
+            } else {
+                for (size_t i = 0; i < session.mappings.size(); ++i) {
+                    const auto& tm = session.mappings[i];
                     
-                    ImGui::Text("%s -> %s", colMap.colA.c_str(), colMap.colB.c_str());
+                    ImVec2 posA(cursor.x + 30.0f, cursor.y + 10.0f + i * gapY);
+                    ImVec2 posB(cursor.x + 340.0f, cursor.y + 10.0f + i * gapY);
                     
-                    ImGui::SameLine(ImGui::GetWindowWidth() - 200);
-                    ImGui::Checkbox("Llave", &colMap.isKey);
+                    // Draw Card A (Source MySQL Table)
+                    drawList->AddRectFilled(posA, ImVec2(posA.x + cardWidth, posA.y + cardHeight), ImGui::GetColorU32(ImVec4(0.18f, 0.12f, 0.28f, 0.85f)), 5.0f);
+                    drawList->AddRect(posA, ImVec2(posA.x + cardWidth, posA.y + cardHeight), ImGui::GetColorU32(ImVec4(0.60f, 0.20f, 1.00f, 1.00f)), 5.0f, 0, 1.5f);
+                    std::string labelA = "MySQL: " + tm.tableA;
+                    drawList->AddText(ImVec2(posA.x + 12.0f, posA.y + 10.0f), ImGui::GetColorU32(ImVec4(0.9f, 0.9f, 0.95f, 1.00f)), labelA.c_str());
                     
-                    ImGui::SameLine(ImGui::GetWindowWidth() - 100);
-                    if (ImGui::Button("Borrar")) {
-                        tm.columns.erase(tm.columns.begin() + k);
-                        state.syncEngine.updateSession(session.name, session);
-                        ImGui::PopID();
-                        break;
-                    }
-
-                    // Setup ID translation dictionary reference
-                    char transTable[128] = "";
-                    strcpy(transTable, colMap.translateViaTable.c_str());
-                    ImGui::SetNextItemWidth(150);
-                    if (ImGui::InputText("Traductor ID", transTable, IM_ARRAYSIZE(transTable))) {
-                        colMap.translateViaTable = transTable;
-                        state.syncEngine.updateSession(session.name, session);
-                    }
-                    ImGui::PopID();
+                    // Draw Card B (Target SQL Server Table)
+                    drawList->AddRectFilled(posB, ImVec2(posB.x + cardWidth, posB.y + cardHeight), ImGui::GetColorU32(ImVec4(0.10f, 0.18f, 0.25f, 0.85f)), 5.0f);
+                    drawList->AddRect(posB, ImVec2(posB.x + cardWidth, posB.y + cardHeight), ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 1.00f)), 5.0f, 0, 1.5f);
+                    std::string labelB = "SQLServer: " + tm.tableB;
+                    drawList->AddText(ImVec2(posB.x + 12.0f, posB.y + 10.0f), ImGui::GetColorU32(ImVec4(0.9f, 0.95f, 0.95f, 1.00f)), labelB.c_str());
+                    
+                    // Draw Connecting horizontal line with dynamic arrows
+                    ImVec2 pinA(posA.x + cardWidth, posA.y + cardHeight * 0.5f);
+                    ImVec2 pinB(posB.x, posB.y + cardHeight * 0.5f);
+                    
+                    drawList->AddLine(pinA, pinB, ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 0.80f)), 2.0f);
+                    drawList->AddTriangleFilled(ImVec2(pinB.x, pinB.y), ImVec2(pinB.x - 8.0f, pinB.y - 5.0f), ImVec2(pinB.x - 8.0f, pinB.y + 5.0f), ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 0.80f)));
                 }
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (session.mappings.size() * gapY) + 15.0f);
             }
-        }
-    }
-    ImGui::EndChild();
+            ImGui::EndChild();
 
-    ImGui::SameLine();
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
 
-    // Panel 3: Right Database B Browser
-    ImGui::BeginChild("PanelRight", ImVec2(colWidth, panelsHeight), true);
-    ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "BD B (DESTINO)");
-    
-    if (state.dbBLoading) {
-        ImGui::Text("Estado: Cargando...");
-        ImGui::Spacing();
-        DrawSpinner("spinnerB", 15.0f, 3.0f, ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 1.00f)));
-        ImGui::TextWrapped("Cargando esquema de la BD B...");
-    } else {
-        ImGui::Text(state.dbBConnected ? "Estado: Conectado" : "Estado: Desconectado");
-        
-        ImGui::InputTextWithHint("##filterB", "Buscar tabla...", state.filterTableB, IM_ARRAYSIZE(state.filterTableB));
-        ImGui::Separator();
-        
-        std::string searchFilterB = state.filterTableB;
-        std::transform(searchFilterB.begin(), searchFilterB.end(), searchFilterB.begin(), ::tolower);
-
-        for (const auto& t : state.tablesB) {
-            std::string tableLower = t;
-            std::transform(tableLower.begin(), tableLower.end(), tableLower.begin(), ::tolower);
-            if (!searchFilterB.empty() && tableLower.find(searchFilterB) == std::string::npos) {
-                continue;
-            }
-
-            bool isSelected = (state.selectedTableB == t);
-            if (ImGui::Selectable(t.c_str(), isSelected)) {
-                state.selectedTableB = t;
-                state.activeTargetCol = ""; // Reset selected col mapping
-            }
-        }
-    }
-    ImGui::EndChild();
-
-    // Dynamic Bézier connection lines rendering
-    if (!state.selectedTableA.empty() && !state.selectedTableB.empty()) {
-        int mappingIdx = -1;
-        for (int i = 0; i < (int)session.mappings.size(); ++i) {
-            if (session.mappings[i].tableA == state.selectedTableA && session.mappings[i].tableB == state.selectedTableB) {
-                mappingIdx = i;
-                break;
-            }
-        }
-
-        if (mappingIdx != -1) {
-            const auto& tm = session.mappings[mappingIdx];
-            for (const auto& colMap : tm.columns) {
-                ImVec2 start(0, 0), end(0, 0);
-                bool startFound = false, endFound = false;
-
-                for (const auto& socket : state.leftSockets) {
-                    if (socket.colName == colMap.colA) {
-                        start = socket.pos;
-                        startFound = true;
-                        break;
-                    }
+            // REPLIX & Migration Controls Columns
+            ImGui::Columns(2, "ReplixCols", false);
+            
+            // COLUMN 1: REPLIX CONTINOUS SYNC
+            ImGui::Text("Servicio de Replica Continua (Segundos: %d):", session.intervalSeconds);
+            ImGui::Spacing();
+            
+            bool isReplixRunning = session.active;
+            if (isReplixRunning) {
+                // Active status button
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.00f, 0.65f, 0.25f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.00f, 0.75f, 0.30f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.55f, 0.20f, 1.00f));
+                if (ImGui::Button("REPLIX: ACTIVO", ImVec2(220, 45))) {
+                    state.syncEngine.stopSession(session.name);
                 }
-                for (const auto& socket : state.rightSockets) {
-                    if (socket.colName == colMap.colB) {
-                        end = socket.pos;
-                        endFound = true;
-                        break;
-                    }
+                ImGui::PopStyleColor(3);
+                ImGui::SameLine();
+                
+                ImGui::BeginGroup();
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10.0f);
+                DrawSpinner("replixSpinner", 10.0f, 2.5f, ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 0.35f, 1.00f)));
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.00f, 0.85f, 0.35f, 1.00f), "Sincronizando...");
+                ImGui::EndGroup();
+            } else {
+                // Inactive status button
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.20f, 0.25f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.30f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.15f, 0.20f, 1.00f));
+                if (ImGui::Button("ACTIVAR REPLIX", ImVec2(220, 45))) {
+                    state.syncEngine.startSession(session.name);
                 }
-
-                if (startFound && endFound) {
-                    bool selected = (state.activeSourceCol == colMap.colA || state.activeTargetCol == colMap.colB);
-                    DrawMappingConnection(start, end, selected);
-                }
+                ImGui::PopStyleColor(3);
+                ImGui::SameLine();
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f);
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Servicio en Pausa");
             }
+
+            ImGui::NextColumn();
+
+            // COLUMN 2: MANUAL DATA MIGRATION
+            ImGui::Text("Migracion Manual Unica:");
+            ImGui::Spacing();
+            
+            if (state.migratingData) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
+                ImGui::Button("MIGRANDO DATOS...", ImVec2(220, 45));
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                
+                ImGui::BeginGroup();
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10.0f);
+                DrawSpinner("migratingSpinner", 10.0f, 2.5f, ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 1.00f)));
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "Migrando...");
+                ImGui::EndGroup();
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.20f, 1.00f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.30f, 1.00f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.50f, 0.15f, 0.90f, 1.00f));
+                if (ImGui::Button("MIGRAR DATOS AHORA", ImVec2(220, 45))) {
+                    state.migratingData = true;
+                    // Run manual migration process in background thread
+                    std::thread([&state, session]() mutable {
+                        state.syncEngine.executeSyncProcess(session);
+                        state.migratingData = false;
+                    }).detach();
+                }
+                ImGui::PopStyleColor(3);
+            }
+            ImGui::Columns(1);
+            
+            ImGui::EndChild();
+            ImGui::EndTabItem();
         }
+        ImGui::EndTabBar();
     }
 
     ImGui::Spacing();

@@ -61,6 +61,7 @@ public:
     // Dynamic Logging Console
     std::vector<std::string> getLogs();
     void addLog(const std::string& msg);
+    void executeSyncProcess(SyncSessionConfig& session);
 
 private:
     std::string m_configPath;
@@ -76,7 +77,6 @@ private:
 
     bool saveConfigInternal();
     void sessionThreadFunc(const std::string& sessionName, std::shared_ptr<std::atomic<bool>> stopFlag);
-    void executeSyncProcess(SyncSessionConfig& session);
 };
 
 } // namespace SincroPro
