@@ -1,0 +1,28 @@
+# Compilacion y carpetas de salida
+build/
+bin/
+obj/
+x64/
+.vs/
+out/
+CMakeSettings.json
+CMakeUserPresets.json
+imgui.ini
+
+# Bases de datos y logs locales
+*.db
+*.db-journal
+*.log
+
+# Cache de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# EXCLUSIÓN DE CREDENCIALES Y SCRIPTS DE LA CARPETA API
+# Solo mantendremos la estructura de carpetas mediante .gitkeep
+API/Mysonda/*.py
+API/Mysonda/*.bat
+API/Fabes/*.py
+API/Fabes/*.bat
