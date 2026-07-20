@@ -759,34 +759,119 @@ void RenderUI(AppState& state) {
                 ImGui::SetCursorPos(ImVec2(15.0f, 60.0f));
                 ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No hay tablas mapeadas en esta sesion. Configura relaciones en la primera pestaña.");
             } else {
+                float time = (float)ImGui::GetTime();
                 for (size_t i = 0; i < session.mappings.size(); ++i) {
                     const auto& tm = session.mappings[i];
                     
                     ImVec2 posA(cursor.x + 30.0f, cursor.y + 10.0f + i * gapY);
                     ImVec2 posB(cursor.x + 340.0f, cursor.y + 10.0f + i * gapY);
                     
+                    // Hover detection
+                    ImVec2 cardA_min = posA;
+                    ImVec2 cardA_max = ImVec2(posA.x + cardWidth, posA.y + cardHeight);
+                    ImVec2 cardB_min = posB;
+                    ImVec2 cardB_max = ImVec2(posB.x + cardWidth, posB.y + cardHeight);
+                    
+                    bool hoveredA = ImGui::IsMouseHoveringRect(cardA_min, cardA_max);
+                    bool hoveredB = ImGui::IsMouseHoveringRect(cardB_min, cardB_max);
+                    
+                    if ((hoveredA || hoveredB) && ImGui::IsMouseClicked(0)) {
+                        state.selectedMappingIdx = (int)i;
+                    }
+                    
+                    bool isSelected = (state.selectedMappingIdx == (int)i);
+                    
+                    // Background Colors
+                    ImU32 colBgA = isSelected ? ImGui::GetColorU32(ImVec4(0.24f, 0.16f, 0.36f, 0.95f)) : ImGui::GetColorU32(ImVec4(0.18f, 0.12f, 0.28f, 0.85f));
+                    ImU32 colBgB = isSelected ? ImGui::GetColorU32(ImVec4(0.10f, 0.20f, 0.30f, 0.95f)) : ImGui::GetColorU32(ImVec4(0.10f, 0.18f, 0.25f, 0.85f));
+                    
+                    // Border Colors with Glow and effects
+                    ImU32 colBorderA;
+                    ImU32 colBorderB;
+                    if (isSelected) {
+                        float pulse = (sinf(time * 6.0f) + 1.0f) * 0.5f;
+                        colBorderA = ImGui::GetColorU32(ImVec4(0.70f + pulse * 0.30f, 0.20f, 1.00f, 1.00f));
+                        colBorderB = ImGui::GetColorU32(ImVec4(0.00f, 0.85f + pulse * 0.15f, 1.00f, 1.00f));
+                    } else if (hoveredA || hoveredB) {
+                        colBorderA = ImGui::GetColorU32(ImVec4(0.80f, 0.40f, 1.00f, 0.90f));
+                        colBorderB = ImGui::GetColorU32(ImVec4(0.00f, 0.95f, 1.00f, 0.90f));
+                    } else {
+                        colBorderA = ImGui::GetColorU32(ImVec4(0.60f, 0.20f, 1.00f, 0.50f));
+                        colBorderB = ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 0.50f));
+                    }
+                    
                     // Draw Card A (Source MySQL Table)
-                    drawList->AddRectFilled(posA, ImVec2(posA.x + cardWidth, posA.y + cardHeight), ImGui::GetColorU32(ImVec4(0.18f, 0.12f, 0.28f, 0.85f)), 5.0f);
-                    drawList->AddRect(posA, ImVec2(posA.x + cardWidth, posA.y + cardHeight), ImGui::GetColorU32(ImVec4(0.60f, 0.20f, 1.00f, 1.00f)), 5.0f, 0, 1.5f);
+                    drawList->AddRectFilled(posA, ImVec2(posA.x + cardWidth, posA.y + cardHeight), colBgA, 5.0f);
+                    drawList->AddRect(posA, ImVec2(posA.x + cardWidth, posA.y + cardHeight), colBorderA, 5.0f, 0, isSelected ? 2.2f : 1.5f);
                     std::string labelA = "MySQL: " + tm.tableA;
                     drawList->AddText(ImVec2(posA.x + 12.0f, posA.y + 10.0f), ImGui::GetColorU32(ImVec4(0.9f, 0.9f, 0.95f, 1.00f)), labelA.c_str());
                     
                     // Draw Card B (Target SQL Server Table)
-                    drawList->AddRectFilled(posB, ImVec2(posB.x + cardWidth, posB.y + cardHeight), ImGui::GetColorU32(ImVec4(0.10f, 0.18f, 0.25f, 0.85f)), 5.0f);
-                    drawList->AddRect(posB, ImVec2(posB.x + cardWidth, posB.y + cardHeight), ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 1.00f)), 5.0f, 0, 1.5f);
+                    drawList->AddRectFilled(posB, ImVec2(posB.x + cardWidth, posB.y + cardHeight), colBgB, 5.0f);
+                    drawList->AddRect(posB, ImVec2(posB.x + cardWidth, posB.y + cardHeight), colBorderB, 5.0f, 0, isSelected ? 2.2f : 1.5f);
                     std::string labelB = "SQLServer: " + tm.tableB;
                     drawList->AddText(ImVec2(posB.x + 12.0f, posB.y + 10.0f), ImGui::GetColorU32(ImVec4(0.9f, 0.95f, 0.95f, 1.00f)), labelB.c_str());
                     
-                    // Draw Connecting horizontal line with dynamic arrows
+                    // Draw Connecting horizontal line with dynamic arrows and pulses
                     ImVec2 pinA(posA.x + cardWidth, posA.y + cardHeight * 0.5f);
                     ImVec2 pinB(posB.x, posB.y + cardHeight * 0.5f);
                     
-                    drawList->AddLine(pinA, pinB, ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 0.80f)), 2.0f);
-                    drawList->AddTriangleFilled(ImVec2(pinB.x, pinB.y), ImVec2(pinB.x - 8.0f, pinB.y - 5.0f), ImVec2(pinB.x - 8.0f, pinB.y + 5.0f), ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 0.80f)));
+                    ImU32 colLine;
+                    float thickness = 2.0f;
+                    if (isSelected) {
+                        float pulse = (sinf(time * 8.0f) + 1.0f) * 0.5f;
+                        colLine = ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 0.80f + pulse * 0.20f));
+                        thickness = 2.0f + pulse * 2.0f;
+                        
+                        // Draw glow shadow
+                        drawList->AddLine(pinA, pinB, ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 0.15f)), thickness + 6.0f);
+                    } else if (hoveredA || hoveredB) {
+                        colLine = ImGui::GetColorU32(ImVec4(0.00f, 0.95f, 1.00f, 0.90f));
+                        thickness = 2.5f;
+                    } else {
+                        colLine = ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 0.60f));
+                    }
+                    
+                    drawList->AddLine(pinA, pinB, colLine, thickness);
+                    drawList->AddTriangleFilled(ImVec2(pinB.x, pinB.y), ImVec2(pinB.x - 8.0f, pinB.y - 5.0f), ImVec2(pinB.x - 8.0f, pinB.y + 5.0f), colLine);
                 }
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (session.mappings.size() * gapY) + 15.0f);
             }
             ImGui::EndChild();
+
+            // Selected relation details box below schema map
+            if (state.selectedMappingIdx >= 0 && state.selectedMappingIdx < (int)session.mappings.size()) {
+                const auto& tm = session.mappings[state.selectedMappingIdx];
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "Detalles de Relación Seleccionada: %s -> %s", tm.tableA.c_str(), tm.tableB.c_str());
+                
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.10f, 0.18f, 0.40f));
+                ImGui::BeginChild("RelationDetails", ImVec2(-1, 80), true);
+                
+                if (tm.columns.empty()) {
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No hay columnas conectadas para esta tabla en la pestaña de Mapeo.");
+                } else {
+                    ImGui::Columns(2, "detailColumns", false);
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Columna BD Origen (MySQL)");
+                    ImGui::NextColumn();
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Columna BD Destino (SQL Server)");
+                    ImGui::NextColumn();
+                    ImGui::Separator();
+                    
+                    for (const auto& col : tm.columns) {
+                        ImGui::TextColored(ImVec4(0.60f, 0.20f, 1.00f, 1.00f), "  [BD A] %s", col.colA.c_str());
+                        ImGui::NextColumn();
+                        ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "  ===>  [BD B] %s %s", col.colB.c_str(), col.isKey ? "(LLAVE)" : "");
+                        ImGui::NextColumn();
+                    }
+                    ImGui::Columns(1);
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleColor();
+            } else {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "* Haz clic en cualquier tarjeta del diagrama de relaciones de arriba para ver el mapeo detallado de sus columnas.");
+            }
 
             ImGui::Spacing();
             ImGui::Separator();
