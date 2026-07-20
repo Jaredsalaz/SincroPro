@@ -12,6 +12,8 @@
 #include <cmath>
 #include <algorithm>
 #include <memory>
+#include <mutex>
+#include <thread>
 
 // Define window dimensions
 const int WINDOW_WIDTH = 1280;
@@ -61,6 +63,13 @@ struct AppState {
 
     bool dbAConnected = false;
     bool dbBConnected = false;
+
+    // Async schema loading state
+    std::mutex dbSchemasMutex;
+    bool dbALoading = false;
+    bool dbBLoading = false;
+    std::string connectionErrorMsg = "";
+    bool triggerErrorPopup = false;
 };
 
 // Premium Glassmorphic Styling
@@ -126,57 +135,138 @@ void ApplyPremiumDarkTheme() {
     colors[ImGuiCol_DragDropTarget]         = ImVec4(0.00f, 0.85f, 1.00f, 0.90f);
 }
 
-// Function to refresh schemas for selected session
+// Draw a premium loading spinner using drawing primitives
+void DrawSpinner(const char* id, float radius, float thickness, ImU32 color) {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImVec2 size(radius * 2.0f, radius * 2.0f);
+    
+    ImGui::Dummy(size);
+    
+    ImVec2 center = ImVec2(pos.x + radius, pos.y + radius);
+    float time = (float)ImGui::GetTime();
+    
+    int numSegments = 30;
+    float startAngle = time * 6.0f;
+    float endAngle = startAngle + (3.14159265f * 1.5f); // 270 degree arc
+    
+    drawList->PathClear();
+    for (int i = 0; i <= numSegments; i++) {
+        float angle = startAngle + (float)i / (float)numSegments * (endAngle - startAngle);
+        drawList->PathLineTo(ImVec2(center.x + cosf(angle) * radius, center.y + sinf(angle) * radius));
+    }
+    drawList->PathStroke(color, false, thickness);
+}
+
+// Function to refresh schemas for selected session asynchronously
 void RefreshDatabaseSchemas(AppState& state) {
     if (state.selectedSessionIdx < 0 || state.selectedSessionIdx >= (int)state.syncEngine.getSessions().size()) {
         return;
     }
 
-    const auto& session = state.syncEngine.getSessions()[state.selectedSessionIdx];
+    state.dbALoading = true;
+    state.dbBLoading = true;
     
-    // Connect databases dynamically based on protocol
-    std::unique_ptr<DatabaseConnector> dbA;
-    if (session.dbA_connStr.rfind("http://", 0) == 0 || session.dbA_connStr.rfind("https://", 0) == 0) {
-        dbA = std::make_unique<APIConnector>();
-    } else {
-        dbA = std::make_unique<ODBCConnector>();
+    // Clear previous error messages
+    {
+        std::lock_guard<std::mutex> lock(state.dbSchemasMutex);
+        state.connectionErrorMsg = "";
     }
 
-    std::unique_ptr<DatabaseConnector> dbB;
-    if (session.dbB_url.rfind("http://", 0) == 0 || session.dbB_url.rfind("https://", 0) == 0) {
-        dbB = std::make_unique<APIConnector>();
-    } else {
-        dbB = std::make_unique<ODBCConnector>();
-    }
+    // Capture session copy to safely reference in threads
+    const auto session = state.syncEngine.getSessions()[state.selectedSessionIdx];
+    
+    // Thread A: Fetch BD A (MySQL)
+    std::thread([&state, session]() {
+        bool connectedA = false;
+        std::vector<std::string> tempTablesA;
+        std::map<std::string, std::vector<std::pair<std::string, std::string>>> tempColsA;
+        std::string errorMsgA = "";
 
-    state.leftSockets.clear();
-    state.rightSockets.clear();
-
-    state.dbAConnected = dbA->connect(session.dbA_connStr);
-    if (state.dbAConnected) {
-        state.tablesA = dbA->getTables();
-        state.colsA.clear();
-        for (const auto& t : state.tablesA) {
-            state.colsA[t] = dbA->getColumns(t);
+        std::unique_ptr<DatabaseConnector> dbA;
+        if (session.dbA_connStr.rfind("http://", 0) == 0 || session.dbA_connStr.rfind("https://", 0) == 0) {
+            dbA = std::make_unique<APIConnector>();
+        } else {
+            dbA = std::make_unique<ODBCConnector>();
         }
-        dbA->disconnect();
-    } else {
-        state.tablesA.clear();
-        state.colsA.clear();
-    }
 
-    state.dbBConnected = dbB->connect(session.dbB_url);
-    if (state.dbBConnected) {
-        state.tablesB = dbB->getTables();
-        state.colsB.clear();
-        for (const auto& t : state.tablesB) {
-            state.colsB[t] = dbB->getColumns(t);
+        connectedA = dbA->connect(session.dbA_connStr);
+        if (connectedA) {
+            tempTablesA = dbA->getTables();
+            if (tempTablesA.empty()) {
+                connectedA = false;
+                errorMsgA = "BD A (" + session.dbA_connStr + "):\nConectado a la API pero no se cargaron tablas. Verifica que la base de datos MySQL local este activa en el puerto 3307.\n\n";
+            } else {
+                for (const auto& t : tempTablesA) {
+                    tempColsA[t] = dbA->getColumns(t);
+                }
+            }
+            dbA->disconnect();
+        } else {
+            errorMsgA = "BD A (" + session.dbA_connStr + "):\nError al conectar al endpoint API. Asegurate de que el script 'mysondav1_api.py' este corriendo en el puerto 5001.\n\n";
         }
-        dbB->disconnect();
-    } else {
-        state.tablesB.clear();
-        state.colsB.clear();
-    }
+
+        // Lock and update AppState schemas for BD A
+        {
+            std::lock_guard<std::mutex> lock(state.dbSchemasMutex);
+            state.dbAConnected = connectedA;
+            state.tablesA = std::move(tempTablesA);
+            state.colsA = std::move(tempColsA);
+            state.leftSockets.clear();
+
+            if (!connectedA) {
+                state.connectionErrorMsg += errorMsgA;
+                state.triggerErrorPopup = true;
+            }
+        }
+        state.dbALoading = false;
+    }).detach();
+
+    // Thread B: Fetch BD B (SQL Server)
+    std::thread([&state, session]() {
+        bool connectedB = false;
+        std::vector<std::string> tempTablesB;
+        std::map<std::string, std::vector<std::pair<std::string, std::string>>> tempColsB;
+        std::string errorMsgB = "";
+
+        std::unique_ptr<DatabaseConnector> dbB;
+        if (session.dbB_url.rfind("http://", 0) == 0 || session.dbB_url.rfind("https://", 0) == 0) {
+            dbB = std::make_unique<APIConnector>();
+        } else {
+            dbB = std::make_unique<ODBCConnector>();
+        }
+
+        connectedB = dbB->connect(session.dbB_url);
+        if (connectedB) {
+            tempTablesB = dbB->getTables();
+            if (tempTablesB.empty()) {
+                connectedB = false;
+                errorMsgB = "BD B (" + session.dbB_url + "):\nConectado a la API pero no se cargaron tablas. Verifica que las credenciales de SQL Server sean correctas.\n\n";
+            } else {
+                for (const auto& t : tempTablesB) {
+                    tempColsB[t] = dbB->getColumns(t);
+                }
+            }
+            dbB->disconnect();
+        } else {
+            errorMsgB = "BD B (" + session.dbB_url + "):\nError al conectar al endpoint API. Asegurate de que 'mysondav2_api.py' este corriendo en el puerto 5002 y la VPN este activa.\n\n";
+        }
+
+        // Lock and update AppState schemas for BD B
+        {
+            std::lock_guard<std::mutex> lock(state.dbSchemasMutex);
+            state.dbBConnected = connectedB;
+            state.tablesB = std::move(tempTablesB);
+            state.colsB = std::move(tempColsB);
+            state.rightSockets.clear();
+
+            if (!connectedB) {
+                state.connectionErrorMsg += errorMsgB;
+                state.triggerErrorPopup = true;
+            }
+        }
+        state.dbBLoading = false;
+    }).detach();
 }
 
 // Draw a beautiful custom Bézier curve mapping connection
@@ -205,9 +295,15 @@ void DrawMappingConnection(ImVec2 start, ImVec2 end, bool selected) {
 
 // GUI Drawing Loop
 void RenderUI(AppState& state) {
+    // Thread safety lock for database schemas
+    std::lock_guard<std::mutex> lock(state.dbSchemasMutex);
+
+    float windowWidth = ImGui::GetIO().DisplaySize.x;
+    float windowHeight = ImGui::GetIO().DisplaySize.y;
+
     // 1. Sidebar Session Manager
     ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(ImVec2(300, (float)WINDOW_HEIGHT));
+    ImGui::SetNextWindowSize(ImVec2(300, windowHeight));
     ImGui::Begin("SessionsSidebar", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
     
     ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "SINCRO PRO v1.0");
@@ -296,7 +392,7 @@ void RenderUI(AppState& state) {
 
     // Work Area
     ImGui::SetNextWindowPos(ImVec2(300, 0));
-    ImGui::SetNextWindowSize(ImVec2((float)WINDOW_WIDTH - 300, (float)WINDOW_HEIGHT));
+    ImGui::SetNextWindowSize(ImVec2(windowWidth - 300, windowHeight));
     ImGui::Begin("WorkSpace", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
 
     if (state.selectedSessionIdx < 0 || state.selectedSessionIdx >= (int)sessions.size()) {
@@ -351,30 +447,39 @@ void RenderUI(AppState& state) {
     ImGui::Spacing();
 
     // 3 Column Visual Sync Mapper Layout
-    float colWidth = ((float)WINDOW_WIDTH - 300.0f - 40.0f) / 3.0f;
+    float colWidth = (windowWidth - 300.0f - 40.0f) / 3.0f;
+    float panelsHeight = std::max(150.0f, windowHeight - 340.0f);
     
     // Panel 1: Left Database A Browser
-    ImGui::BeginChild("PanelLeft", ImVec2(colWidth, 360), true);
+    ImGui::BeginChild("PanelLeft", ImVec2(colWidth, panelsHeight), true);
     ImGui::TextColored(ImVec4(0.60f, 0.20f, 1.00f, 1.00f), "BD A (ORIGEN)");
-    ImGui::Text(state.dbAConnected ? "Estado: Conectado" : "Estado: Desconectado");
     
-    ImGui::InputTextWithHint("##filterA", "Buscar tabla...", state.filterTableA, IM_ARRAYSIZE(state.filterTableA));
-    ImGui::Separator();
-    
-    std::string searchFilterA = state.filterTableA;
-    std::transform(searchFilterA.begin(), searchFilterA.end(), searchFilterA.begin(), ::tolower);
+    if (state.dbALoading) {
+        ImGui::Text("Estado: Cargando...");
+        ImGui::Spacing();
+        DrawSpinner("spinnerA", 15.0f, 3.0f, ImGui::GetColorU32(ImVec4(0.60f, 0.20f, 1.00f, 1.00f)));
+        ImGui::TextWrapped("Cargando esquema de la BD A...");
+    } else {
+        ImGui::Text(state.dbAConnected ? "Estado: Conectado" : "Estado: Desconectado");
+        
+        ImGui::InputTextWithHint("##filterA", "Buscar tabla...", state.filterTableA, IM_ARRAYSIZE(state.filterTableA));
+        ImGui::Separator();
+        
+        std::string searchFilterA = state.filterTableA;
+        std::transform(searchFilterA.begin(), searchFilterA.end(), searchFilterA.begin(), ::tolower);
 
-    for (const auto& t : state.tablesA) {
-        std::string tableLower = t;
-        std::transform(tableLower.begin(), tableLower.end(), tableLower.begin(), ::tolower);
-        if (!searchFilterA.empty() && tableLower.find(searchFilterA) == std::string::npos) {
-            continue;
-        }
+        for (const auto& t : state.tablesA) {
+            std::string tableLower = t;
+            std::transform(tableLower.begin(), tableLower.end(), tableLower.begin(), ::tolower);
+            if (!searchFilterA.empty() && tableLower.find(searchFilterA) == std::string::npos) {
+                continue;
+            }
 
-        bool isSelected = (state.selectedTableA == t);
-        if (ImGui::Selectable(t.c_str(), isSelected)) {
-            state.selectedTableA = t;
-            state.activeSourceCol = ""; // Reset selected col mapping
+            bool isSelected = (state.selectedTableA == t);
+            if (ImGui::Selectable(t.c_str(), isSelected)) {
+                state.selectedTableA = t;
+                state.activeSourceCol = ""; // Reset selected col mapping
+            }
         }
     }
     ImGui::EndChild();
@@ -382,7 +487,7 @@ void RenderUI(AppState& state) {
     ImGui::SameLine();
 
     // Panel 2: Center Mapping Config / Connection Lines Workspace
-    ImGui::BeginChild("PanelCenter", ImVec2(colWidth, 360), true);
+    ImGui::BeginChild("PanelCenter", ImVec2(colWidth, panelsHeight), true);
     ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "MAPEO Y RELACIONES");
     
     if (state.selectedTableA.empty() || state.selectedTableB.empty()) {
@@ -557,27 +662,35 @@ void RenderUI(AppState& state) {
     ImGui::SameLine();
 
     // Panel 3: Right Database B Browser
-    ImGui::BeginChild("PanelRight", ImVec2(colWidth, 360), true);
+    ImGui::BeginChild("PanelRight", ImVec2(colWidth, panelsHeight), true);
     ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "BD B (DESTINO)");
-    ImGui::Text(state.dbBConnected ? "Estado: Conectado" : "Estado: Desconectado");
     
-    ImGui::InputTextWithHint("##filterB", "Buscar tabla...", state.filterTableB, IM_ARRAYSIZE(state.filterTableB));
-    ImGui::Separator();
-    
-    std::string searchFilterB = state.filterTableB;
-    std::transform(searchFilterB.begin(), searchFilterB.end(), searchFilterB.begin(), ::tolower);
+    if (state.dbBLoading) {
+        ImGui::Text("Estado: Cargando...");
+        ImGui::Spacing();
+        DrawSpinner("spinnerB", 15.0f, 3.0f, ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 1.00f, 1.00f)));
+        ImGui::TextWrapped("Cargando esquema de la BD B...");
+    } else {
+        ImGui::Text(state.dbBConnected ? "Estado: Conectado" : "Estado: Desconectado");
+        
+        ImGui::InputTextWithHint("##filterB", "Buscar tabla...", state.filterTableB, IM_ARRAYSIZE(state.filterTableB));
+        ImGui::Separator();
+        
+        std::string searchFilterB = state.filterTableB;
+        std::transform(searchFilterB.begin(), searchFilterB.end(), searchFilterB.begin(), ::tolower);
 
-    for (const auto& t : state.tablesB) {
-        std::string tableLower = t;
-        std::transform(tableLower.begin(), tableLower.end(), tableLower.begin(), ::tolower);
-        if (!searchFilterB.empty() && tableLower.find(searchFilterB) == std::string::npos) {
-            continue;
-        }
+        for (const auto& t : state.tablesB) {
+            std::string tableLower = t;
+            std::transform(tableLower.begin(), tableLower.end(), tableLower.begin(), ::tolower);
+            if (!searchFilterB.empty() && tableLower.find(searchFilterB) == std::string::npos) {
+                continue;
+            }
 
-        bool isSelected = (state.selectedTableB == t);
-        if (ImGui::Selectable(t.c_str(), isSelected)) {
-            state.selectedTableB = t;
-            state.activeTargetCol = ""; // Reset selected col mapping
+            bool isSelected = (state.selectedTableB == t);
+            if (ImGui::Selectable(t.c_str(), isSelected)) {
+                state.selectedTableB = t;
+                state.activeTargetCol = ""; // Reset selected col mapping
+            }
         }
     }
     ImGui::EndChild();
@@ -650,6 +763,25 @@ void RenderUI(AppState& state) {
 
     ImGui::EndChild();
     ImGui::PopStyleColor();
+
+    // Trigger error popup from main thread
+    if (state.triggerErrorPopup) {
+        ImGui::OpenPopup("Error de Conexion");
+        state.triggerErrorPopup = false;
+    }
+
+    // Modal popup rendering
+    if (ImGui::BeginPopupModal("Error de Conexion", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextColored(ImVec4(1.00f, 0.25f, 0.25f, 1.00f), "ERROR DE CONEXION");
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", state.connectionErrorMsg.c_str());
+        ImGui::Spacing();
+        if (ImGui::Button("Cerrar", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 
     ImGui::End();
 }
