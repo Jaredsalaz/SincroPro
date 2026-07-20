@@ -168,11 +168,8 @@ void RefreshDatabaseSchemas(AppState& state) {
     state.dbALoading = true;
     state.dbBLoading = true;
     
-    // Clear previous error messages
-    {
-        std::lock_guard<std::mutex> lock(state.dbSchemasMutex);
-        state.connectionErrorMsg = "";
-    }
+    // Clear previous error messages (already under GUI lock when clicked, or safe at startup)
+    state.connectionErrorMsg = "";
 
     // Capture session copy to safely reference in threads
     const auto session = state.syncEngine.getSessions()[state.selectedSessionIdx];
@@ -219,8 +216,8 @@ void RefreshDatabaseSchemas(AppState& state) {
                 state.connectionErrorMsg += errorMsgA;
                 state.triggerErrorPopup = true;
             }
+            state.dbALoading = false;
         }
-        state.dbALoading = false;
     }).detach();
 
     // Thread B: Fetch BD B (SQL Server)
@@ -265,8 +262,8 @@ void RefreshDatabaseSchemas(AppState& state) {
                 state.connectionErrorMsg += errorMsgB;
                 state.triggerErrorPopup = true;
             }
+            state.dbBLoading = false;
         }
-        state.dbBLoading = false;
     }).detach();
 }
 
