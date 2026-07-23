@@ -13,18 +13,18 @@ SincroPro implementa una arquitectura híbrida de tres niveles (*Three-Tier Arch
 
 ```mermaid
 graph TD
-    A[SincroPro C++ Client / GUI] -->|Modifica Mapeos y Sesiones| B[(config.json)]
-    A -->|Consultas de Esquema Asíncronas| C[Python APIs / Go High-Perf API]
+    A["SincroPro C++ Client / GUI"] -->|Modifica Mapeos y Sesiones| B[("config.json")]
+    A -->|Consultas de Esquema Asíncronas| C["Python APIs / Go High-Perf API"]
     
     subgraph Segundo Plano / 24-7 Daemon
-        D[Replix Daemon Go] -->|Lee y Monitorea| B
-        D -->|Sincronización Continua / Batch| E[(id_mappings.db SQLite)]
+        D["Replix Daemon Go"] -->|Lee y Monitorea| B
+        D -->|Sincronización Continua / Batch| E[("id_mappings.db SQLite")]
         D -->|Consumo REST / Batch| C
     end
 
     subgraph Capa de Datos / Motores
-        C -->|V1: MySQL API (Port 5001)| F[(MySQL / Mysonda V1)]
-        C -->|V2: SQL Server API (Port 5002)| G[(SQL Server / Mysonda V2)]
+        C -->|V1: MySQL API Port 5001| F[("MySQL / Mysonda V1")]
+        C -->|V2: SQL Server API Port 5002| G[("SQL Server / Mysonda V2")]
     end
 ```
 
