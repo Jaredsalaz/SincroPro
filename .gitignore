@@ -24,5 +24,10 @@ __pycache__/
 # Solo mantendremos la estructura de carpetas mediante .gitkeep
 API/Mysonda/*.py
 API/Mysonda/*.bat
+API/Mysonda/*.json
+API/Mysonda/*.bak
 API/Fabes/*.py
 API/Fabes/*.bat
+API/MySonda-GO/*.exe
+API/MySonda-GO/schema_cache.json
+API/MySonda-GO/id_mappings.json
