@@ -112,6 +112,9 @@ std::string HttpClient::request(const std::string& method, const std::string& ur
                                     WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return "";
 
+    // Set 45 second timeouts for resolve, connect, send, and receive
+    WinHttpSetTimeouts(hSession, 45000, 45000, 45000, 45000);
+
     HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), port, 0);
     if (!hConnect) {
         WinHttpCloseHandle(hSession);

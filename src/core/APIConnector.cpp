@@ -126,6 +126,10 @@ std::string APIConnector::executeInsert(const std::string& tableNameOrEndpoint, 
     try {
         if (!response.empty()) {
             auto j = json::parse(response);
+            if (j.is_object() && j.contains("error")) {
+                std::cerr << "APIConnector: Insert failed with error: " << j["error"].dump() << std::endl;
+                return "";
+            }
             if (j.is_object() && j.contains("id")) {
                 if (j["id"].is_string()) return j["id"].get<std::string>();
                 return j["id"].dump();
@@ -134,14 +138,13 @@ std::string APIConnector::executeInsert(const std::string& tableNameOrEndpoint, 
             } else if (j.is_string()) {
                 return j.get<std::string>();
             }
-            return response; // Return full response if it couldn't extract key ID
+            return "";
         }
     } catch (...) {
-        // Response might be a plain text ID
-        return response;
+        return "";
     }
 
-    return response;
+    return "";
 }
 
 bool APIConnector::executeUpdate(const std::string& tableNameOrEndpoint, const std::map<std::string, std::string>& data, const std::string& keyColumn, const std::string& keyValue) {
@@ -157,6 +160,16 @@ bool APIConnector::executeUpdate(const std::string& tableNameOrEndpoint, const s
 
     std::string body = payload.dump();
     std::string response = HttpClient::put(url, body, m_headers);
+
+    try {
+        if (!response.empty()) {
+            auto j = json::parse(response);
+            if (j.is_object() && j.contains("error")) {
+                return false;
+            }
+            return true;
+        }
+    } catch (...) {}
 
     return !response.empty();
 }

@@ -65,7 +65,7 @@ struct AppState {
     bool dbBConnected = false;
 
     // Async schema loading state
-    std::mutex dbSchemasMutex;
+    std::recursive_mutex dbSchemasMutex;
     bool dbALoading = false;
     bool dbBLoading = false;
     std::string connectionErrorMsg = "";
@@ -168,8 +168,19 @@ void RefreshDatabaseSchemas(AppState& state) {
     state.dbALoading = true;
     state.dbBLoading = true;
     
-    // Clear previous error messages (already under GUI lock when clicked, or safe at startup)
+    // Clear previous error messages and reset cached schemas under lock
     state.connectionErrorMsg = "";
+    {
+        std::lock_guard<std::recursive_mutex> lock(state.dbSchemasMutex);
+        state.tablesA.clear();
+        state.tablesB.clear();
+        state.colsA.clear();
+        state.colsB.clear();
+        state.leftSockets.clear();
+        state.rightSockets.clear();
+        state.dbAConnected = false;
+        state.dbBConnected = false;
+    }
 
     // Capture session copy to safely reference in threads
     const auto session = state.syncEngine.getSessions()[state.selectedSessionIdx];
@@ -206,7 +217,7 @@ void RefreshDatabaseSchemas(AppState& state) {
 
         // Lock and update AppState schemas for BD A
         {
-            std::lock_guard<std::mutex> lock(state.dbSchemasMutex);
+            std::lock_guard<std::recursive_mutex> lock(state.dbSchemasMutex);
             state.dbAConnected = connectedA;
             state.tablesA = std::move(tempTablesA);
             state.colsA = std::move(tempColsA);
@@ -252,7 +263,7 @@ void RefreshDatabaseSchemas(AppState& state) {
 
         // Lock and update AppState schemas for BD B
         {
-            std::lock_guard<std::mutex> lock(state.dbSchemasMutex);
+            std::lock_guard<std::recursive_mutex> lock(state.dbSchemasMutex);
             state.dbBConnected = connectedB;
             state.tablesB = std::move(tempTablesB);
             state.colsB = std::move(tempColsB);
@@ -294,7 +305,7 @@ void DrawMappingConnection(ImVec2 start, ImVec2 end, bool selected) {
 // GUI Drawing Loop
 void RenderUI(AppState& state) {
     // Thread safety lock for database schemas
-    std::lock_guard<std::mutex> lock(state.dbSchemasMutex);
+    std::lock_guard<std::recursive_mutex> lock(state.dbSchemasMutex);
 
     float windowWidth = ImGui::GetIO().DisplaySize.x;
     float windowHeight = ImGui::GetIO().DisplaySize.y;
@@ -326,6 +337,17 @@ void RenderUI(AppState& state) {
             state.newSessionName[0] = '\0'; // clear input
             state.selectedSessionIdx = (int)state.syncEngine.getSessions().size() - 1;
             
+            // Reset active mapping selection state to prevent bleed across sessions
+            state.selectedTableA = "";
+            state.selectedTableB = "";
+            state.activeSourceCol = "";
+            state.activeTargetCol = "";
+            state.selectedMappingIdx = -1;
+            state.filterTableA[0] = '\0';
+            state.filterTableB[0] = '\0';
+            state.leftSockets.clear();
+            state.rightSockets.clear();
+
             // Populate config editor text fields
             strcpy(state.dbAConnStr, s.dbA_connStr.c_str());
             strcpy(state.dbBUrl, s.dbB_url.c_str());
@@ -349,14 +371,21 @@ void RenderUI(AppState& state) {
         if (ImGui::Selectable(label.c_str(), isSelected)) {
             state.selectedSessionIdx = i;
             
+            // Reset active mapping selection state to prevent bleed across sessions
+            state.selectedTableA = "";
+            state.selectedTableB = "";
+            state.activeSourceCol = "";
+            state.activeTargetCol = "";
+            state.selectedMappingIdx = -1;
+            state.filterTableA[0] = '\0';
+            state.filterTableB[0] = '\0';
+            state.leftSockets.clear();
+            state.rightSockets.clear();
+
             // Populate fields
             strcpy(state.dbAConnStr, sessions[i].dbA_connStr.c_str());
             strcpy(state.dbBUrl, sessions[i].dbB_url.c_str());
             state.intervalSeconds = sessions[i].intervalSeconds;
-            
-            state.selectedTableA = "";
-            state.selectedTableB = "";
-            state.selectedMappingIdx = -1;
 
             RefreshDatabaseSchemas(state);
         }
@@ -381,6 +410,15 @@ void RenderUI(AppState& state) {
             if (ImGui::MenuItem("Eliminar Sesion")) {
                 state.syncEngine.deleteSession(sessions[i].name);
                 state.selectedSessionIdx = -1;
+                state.selectedTableA = "";
+                state.selectedTableB = "";
+                state.activeSourceCol = "";
+                state.activeTargetCol = "";
+                state.selectedMappingIdx = -1;
+                state.filterTableA[0] = '\0';
+                state.filterTableB[0] = '\0';
+                state.leftSockets.clear();
+                state.rightSockets.clear();
             }
             ImGui::EndPopup();
         }
@@ -492,6 +530,26 @@ void RenderUI(AppState& state) {
             ImGui::BeginChild("PanelCenter", ImVec2(colWidth, panelsHeight), true);
             ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "MAPEO Y RELACIONES");
             
+            if (!session.mappings.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.20f, 0.20f, 0.70f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.25f, 0.25f, 0.90f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.00f, 0.35f, 0.35f, 1.00f));
+                if (ImGui::Button("Borrar Todas las Relaciones", ImVec2(-1, 24))) {
+                    session.mappings.clear();
+                    state.syncEngine.updateSession(session.name, session);
+                    state.selectedMappingIdx = -1;
+                    state.selectedTableA = "";
+                    state.selectedTableB = "";
+                    state.activeSourceCol = "";
+                    state.activeTargetCol = "";
+                    state.leftSockets.clear();
+                    state.rightSockets.clear();
+                }
+                ImGui::PopStyleColor(3);
+                ImGui::Spacing();
+            }
+            ImGui::Separator();
+            
             if (state.selectedTableA.empty() || state.selectedTableB.empty()) {
                 ImGui::TextWrapped("Selecciona una tabla origen (izquierda) y destino (derecha) para crear mapeo.");
             } else {
@@ -530,6 +588,11 @@ void RenderUI(AppState& state) {
                         session.mappings.erase(session.mappings.begin() + mappingIdx);
                         state.syncEngine.updateSession(session.name, session);
                         mappingIdx = -1;
+                        state.selectedMappingIdx = -1;
+                        state.activeSourceCol = "";
+                        state.activeTargetCol = "";
+                        state.leftSockets.clear();
+                        state.rightSockets.clear();
                     }
 
                     if (mappingIdx != -1) {
@@ -613,8 +676,38 @@ void RenderUI(AppState& state) {
                                     ColumnMapping cm;
                                     cm.colA = state.activeSourceCol;
                                     cm.colB = state.activeTargetCol;
-                                    cm.isKey = (state.activeSourceCol == "id" || state.activeSourceCol == "id_cliente" || state.activeSourceCol == "id_item" || state.activeSourceCol == "id_trx");
+                                    
+                                    std::string colLower = cm.colA;
+                                    std::transform(colLower.begin(), colLower.end(), colLower.begin(), ::tolower);
+                                    
+                                    cm.isKey = (colLower == "id" || colLower == "id_cliente" || colLower == "id_item" || colLower == "id_trx");
                                     cm.translateViaTable = "";
+
+                                    // --- SMART AUTO-DETECTION FOR FOREIGN KEYS ---
+                                    // If not primary key, check if colA references another mapped table in session
+                                    if (!cm.isKey) {
+                                        for (const auto& otherMap : session.mappings) {
+                                            if (otherMap.tableA == tm.tableA) continue; // Skip current table
+                                            
+                                            std::string targetTableLower = otherMap.tableA;
+                                            std::transform(targetTableLower.begin(), targetTableLower.end(), targetTableLower.begin(), ::tolower);
+                                            
+                                            // Check matching patterns (e.g. col 'IDTipo' references table 'tipo')
+                                            if (colLower.find(targetTableLower) != std::string::npos ||
+                                                targetTableLower.find(colLower) != std::string::npos) {
+                                                cm.translateViaTable = otherMap.tableA;
+                                                break;
+                                            }
+                                            // Also check plural/singular heuristics (e.g. 'tipo' vs 'tipos', 'usuario' vs 'usuarios')
+                                            std::string singular = targetTableLower;
+                                            if (!singular.empty() && singular.back() == 's') singular.pop_back();
+                                            if (!singular.empty() && colLower.find(singular) != std::string::npos) {
+                                                cm.translateViaTable = otherMap.tableA;
+                                                break;
+                                            }
+                                        }
+                                    }
+
                                     tm.columns.push_back(cm);
                                 }
 
@@ -633,12 +726,14 @@ void RenderUI(AppState& state) {
                             auto& colMap = tm.columns[k];
                             ImGui::PushID(static_cast<int>(k));
                             
-                            ImGui::Text("%s -> %s", colMap.colA.c_str(), colMap.colB.c_str());
+                            ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "%s -> %s", colMap.colA.c_str(), colMap.colB.c_str());
                             
-                            ImGui::SameLine(ImGui::GetWindowWidth() - 200);
-                            ImGui::Checkbox("Llave", &colMap.isKey);
+                            ImGui::SameLine(ImGui::GetWindowWidth() - 220);
+                            if (ImGui::Checkbox("Llave (PK)", &colMap.isKey)) {
+                                state.syncEngine.updateSession(session.name, session);
+                            }
                             
-                            ImGui::SameLine(ImGui::GetWindowWidth() - 100);
+                            ImGui::SameLine(ImGui::GetWindowWidth() - 90);
                             if (ImGui::Button("Borrar")) {
                                 tm.columns.erase(tm.columns.begin() + k);
                                 state.syncEngine.updateSession(session.name, session);
@@ -646,13 +741,78 @@ void RenderUI(AppState& state) {
                                 break;
                             }
 
-                            // Setup ID translation dictionary reference
-                            char transTable[128] = "";
-                            strcpy(transTable, colMap.translateViaTable.c_str());
-                            ImGui::SetNextItemWidth(150);
-                            if (ImGui::InputText("Traductor ID", transTable, IM_ARRAYSIZE(transTable))) {
-                                colMap.translateViaTable = transTable;
-                                state.syncEngine.updateSession(session.name, session);
+                            // Setup ID translation dictionary reference via visual Dropdown Combo with Search Box
+                            std::string currentTrans = colMap.translateViaTable;
+                            std::string comboPreview = currentTrans.empty() ? "[Sin Llave Foránea (Directo)]" : ("FK -> BD A: " + currentTrans);
+
+                            static char fkSearchBuf[128] = "";
+
+                            ImGui::SetNextItemWidth(260);
+                            if (ImGui::BeginCombo("Traductor ID (FK)", comboPreview.c_str())) {
+                                // Search Input Box at the top of the combo menu
+                                ImGui::SetNextItemWidth(-1);
+                                ImGui::InputTextWithHint("##fkSearchInput", "Buscar tabla...", fkSearchBuf, IM_ARRAYSIZE(fkSearchBuf));
+                                ImGui::Separator();
+
+                                std::string searchStr = fkSearchBuf;
+                                std::transform(searchStr.begin(), searchStr.end(), searchStr.begin(), ::tolower);
+
+                                bool isSelectedNone = currentTrans.empty();
+                                if (searchStr.empty() || std::string("sin llave foranea directo").find(searchStr) != std::string::npos) {
+                                    if (ImGui::Selectable("[Sin Llave Foránea (Directo)]", isSelectedNone)) {
+                                        colMap.translateViaTable = "";
+                                        state.syncEngine.updateSession(session.name, session);
+                                        fkSearchBuf[0] = '\0';
+                                    }
+                                }
+
+                                ImGui::Separator();
+                                ImGui::TextDisabled("--- Tablas Mapeadas en Sesión (Recomendadas) ---");
+                                std::vector<std::string> mappedTablesA;
+                                for (const auto& otherMap : session.mappings) {
+                                    mappedTablesA.push_back(otherMap.tableA);
+
+                                    std::string searchTarget = otherMap.tableA + " " + otherMap.tableB;
+                                    std::transform(searchTarget.begin(), searchTarget.end(), searchTarget.begin(), ::tolower);
+                                    if (!searchStr.empty() && searchTarget.find(searchStr) == std::string::npos) {
+                                        continue;
+                                    }
+
+                                    bool isSel = (currentTrans == otherMap.tableA);
+                                    std::string label = "★ " + otherMap.tableA + " -> " + otherMap.tableB;
+                                    if (ImGui::Selectable(label.c_str(), isSel)) {
+                                        colMap.translateViaTable = otherMap.tableA;
+                                        state.syncEngine.updateSession(session.name, session);
+                                        fkSearchBuf[0] = '\0';
+                                    }
+                                }
+
+                                ImGui::Separator();
+                                ImGui::TextDisabled("--- Todas las Tablas BD A (Origen) ---");
+                                for (const auto& tA : state.tablesA) {
+                                    // Skip already listed mapped tables
+                                    if (std::find(mappedTablesA.begin(), mappedTablesA.end(), tA) != mappedTablesA.end()) continue;
+
+                                    std::string tALower = tA;
+                                    std::transform(tALower.begin(), tALower.end(), tALower.begin(), ::tolower);
+                                    if (!searchStr.empty() && tALower.find(searchStr) == std::string::npos) {
+                                        continue;
+                                    }
+
+                                    bool isSel = (currentTrans == tA);
+                                    std::string label = "   " + tA;
+                                    if (ImGui::Selectable(label.c_str(), isSel)) {
+                                        colMap.translateViaTable = tA;
+                                        state.syncEngine.updateSession(session.name, session);
+                                        fkSearchBuf[0] = '\0';
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+
+                            if (!colMap.translateViaTable.empty()) {
+                                ImGui::SameLine();
+                                ImGui::TextColored(ImVec4(0.40f, 1.00f, 0.40f, 1.00f), " FK -> %s", colMap.translateViaTable.c_str());
                             }
                             ImGui::PopID();
                         }
@@ -746,6 +906,24 @@ void RenderUI(AppState& state) {
             
             // Graphic Schema Relations Map
             ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "DIAGRAMA DE FLUJO DE RELACIONES:");
+            if (!session.mappings.empty()) {
+                ImGui::SameLine(ImGui::GetWindowWidth() - 220);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.20f, 0.20f, 0.70f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.25f, 0.25f, 0.90f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.00f, 0.35f, 0.35f, 1.00f));
+                if (ImGui::Button("Borrar Todas las Relaciones", ImVec2(200, 22))) {
+                    session.mappings.clear();
+                    state.syncEngine.updateSession(session.name, session);
+                    state.selectedMappingIdx = -1;
+                    state.selectedTableA = "";
+                    state.selectedTableB = "";
+                    state.activeSourceCol = "";
+                    state.activeTargetCol = "";
+                    state.leftSockets.clear();
+                    state.rightSockets.clear();
+                }
+                ImGui::PopStyleColor(3);
+            }
             
             ImGui::BeginChild("RelationsCanvas", ImVec2(-1, 160), true, ImGuiWindowFlags_HorizontalScrollbar);
             ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -861,7 +1039,10 @@ void RenderUI(AppState& state) {
                     for (const auto& col : tm.columns) {
                         ImGui::TextColored(ImVec4(0.60f, 0.20f, 1.00f, 1.00f), "  [BD A] %s", col.colA.c_str());
                         ImGui::NextColumn();
-                        ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "  ===>  [BD B] %s %s", col.colB.c_str(), col.isKey ? "(LLAVE)" : "");
+                        std::string extraTag = "";
+                        if (col.isKey) extraTag += " (LLAVE PK)";
+                        if (!col.translateViaTable.empty()) extraTag += " (FK -> " + col.translateViaTable + ")";
+                        ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 1.00f), "  ===>  [BD B] %s%s", col.colB.c_str(), extraTag.c_str());
                         ImGui::NextColumn();
                     }
                     ImGui::Columns(1);

@@ -257,7 +257,9 @@ void SyncEngine::updateSession(const std::string& oldName, const SyncSessionConf
         std::lock_guard<std::mutex> lock(m_sessionsMutex);
         for (auto& s : m_sessions) {
             if (s.name == oldName) {
-                s = session;
+                if (&s != &session) {
+                    s = session;
+                }
                 break;
             }
         }
@@ -398,6 +400,8 @@ void SyncEngine::executeSyncProcess(SyncSessionConfig& session) {
 
             // Build target columns insert/update payload
             std::map<std::string, std::string> targetData;
+            bool missingFk = false;
+
             for (const auto& col : tm.columns) {
                 // If it's the primary key of B and it's an auto-generated identity mapping, skip sending it to insert payload 
                 // if it hasn't been mapped yet, let the API generate it.
@@ -415,13 +419,18 @@ void SyncEngine::executeSyncProcess(SyncSessionConfig& session) {
                         if (!translatedId.empty()) {
                             valueToSync = translatedId;
                         } else {
-                            // If the relation ID mapping is missing (e.g. referenced user wasn't synced yet),
-                            // we log a warning and continue, but we can also sync it with NULL or let it fail or log.
-                            addLog("Session [" + session.name + "]: Warning: Mapeo de ID perdido para columna " + col.colB + " con valor original " + itVal->second);
+                            // The referenced parent row does not exist in source DB (orphan FK)
+                            addLog("Session [" + session.name + "]: Aviso: Fila omitida en " + tm.tableB + " (ID Origen: " + sourceIdVal + ") porque la columna " + col.colB + " referencia al ID '" + itVal->second + "' que no existe en la tabla padre '" + col.translateViaTable + "'.");
+                            missingFk = true;
+                            break;
                         }
                     }
                     targetData[col.colB] = valueToSync;
                 }
+            }
+
+            if (missingFk) {
+                continue; // Skip inserting/updating rows with broken parent references
             }
 
             // Check if this row is already translated (i.e. has a synced counterpart in target)
