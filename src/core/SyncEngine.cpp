@@ -223,16 +223,26 @@ void SyncEngine::startAll() {
 }
 
 void SyncEngine::stopAll() {
-    std::vector<std::string> sessionsToStop;
+    std::vector<std::thread> threadObjs;
+
     {
         std::lock_guard<std::mutex> lock(m_sessionsMutex);
-        for (const auto& pair : m_sessionThreads) {
-            sessionsToStop.push_back(pair.first);
+        for (auto& pair : m_sessionStopFlags) {
+            if (pair.second) {
+                pair.second->store(true);
+            }
         }
+        for (auto& pair : m_sessionThreads) {
+            threadObjs.push_back(std::move(pair.second));
+        }
+        m_sessionThreads.clear();
+        m_sessionStopFlags.clear();
     }
 
-    for (const auto& name : sessionsToStop) {
-        stopSession(name);
+    for (auto& t : threadObjs) {
+        if (t.joinable()) {
+            t.join();
+        }
     }
 }
 
