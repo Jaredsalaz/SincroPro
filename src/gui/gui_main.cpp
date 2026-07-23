@@ -1062,7 +1062,38 @@ void RenderUI(AppState& state) {
             ImGui::Columns(2, "ReplixCols", false);
             
             // COLUMN 1: REPLIX CONTINOUS SYNC
-            ImGui::Text("Servicio de Replica Continua (Segundos: %d):", session.intervalSeconds);
+            ImGui::Text("Servicio de Réplica Continua (REPLIX):");
+            ImGui::Spacing();
+
+            // Interval Selector Combo
+            static int currentIntervalIdx = 0;
+            const char* intervalsList[] = {
+                "⚡ 5 segundos (Tiempo Real)",
+                "⏱️ 10 segundos",
+                "⏱️ 30 segundos",
+                "⏳ 1 minuto",
+                "⏳ 5 minutos",
+                "⏳ 10 minutos (PRO)",
+                "⏳ 30 minutos",
+                "⏳ 1 hora"
+            };
+            const int intervalValues[] = { 5, 10, 30, 60, 300, 600, 1800, 3600 };
+
+            // Determine active index from session.intervalSeconds
+            for (int i = 0; i < 8; ++i) {
+                if (session.intervalSeconds == intervalValues[i]) {
+                    currentIntervalIdx = i;
+                    break;
+                }
+            }
+
+            ImGui::SetNextItemWidth(260.0f);
+            if (ImGui::Combo("##IntervalCombo", &currentIntervalIdx, intervalsList, 8)) {
+                int newSecs = intervalValues[currentIntervalIdx];
+                SyncSessionConfig updatedSession = session;
+                updatedSession.intervalSeconds = newSecs;
+                state.syncEngine.updateSession(session.name, updatedSession);
+            }
             ImGui::Spacing();
             
             bool isReplixRunning = session.active;
@@ -1071,14 +1102,14 @@ void RenderUI(AppState& state) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.00f, 0.65f, 0.25f, 1.00f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.00f, 0.75f, 0.30f, 1.00f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.55f, 0.20f, 1.00f));
-                if (ImGui::Button("REPLIX: ACTIVO", ImVec2(180, 32))) {
+                if (ImGui::Button("REPLIX: ACTIVO (24/7)", ImVec2(200, 34))) {
                     state.syncEngine.stopSession(session.name);
                 }
                 ImGui::PopStyleColor(3);
                 ImGui::SameLine();
                 
                 ImGui::BeginGroup();
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.0f);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 5.0f);
                 DrawSpinner("replixSpinner", 10.0f, 2.5f, ImGui::GetColorU32(ImVec4(0.00f, 0.85f, 0.35f, 1.00f)));
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(0.00f, 0.85f, 0.35f, 1.00f), "Sincronizando...");
@@ -1088,7 +1119,7 @@ void RenderUI(AppState& state) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.20f, 0.25f, 1.00f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.30f, 1.00f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.15f, 0.20f, 1.00f));
-                if (ImGui::Button("ACTIVAR REPLIX", ImVec2(180, 32))) {
+                if (ImGui::Button("ACTIVAR REPLIX", ImVec2(200, 34))) {
                     state.syncEngine.startSession(session.name);
                 }
                 ImGui::PopStyleColor(3);
@@ -1096,6 +1127,9 @@ void RenderUI(AppState& state) {
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6.0f);
                 ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Servicio en Pausa");
             }
+
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.00f, 0.85f, 1.00f, 0.85f), "🛡️ Demonio de Servicio SO: Inicio Automático al Encender la PC");
 
             ImGui::NextColumn();
 

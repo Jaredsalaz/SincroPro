@@ -319,10 +319,22 @@ void SyncEngine::sessionThreadFunc(const std::string& sessionName, std::shared_p
     addLog("Session [" + sessionName + "] sync thread is running.");
 
     while (!stopFlag->load()) {
-        executeSyncProcess(session);
+        SyncSessionConfig currentSession = session;
+        {
+            std::lock_guard<std::mutex> lock(m_sessionsMutex);
+            for (const auto& s : m_sessions) {
+                if (s.name == sessionName) {
+                    currentSession = s;
+                    break;
+                }
+            }
+        }
 
-        // Sleep in small steps to react to stopFlag quickly
-        for (int i = 0; i < session.intervalSeconds * 10; ++i) {
+        executeSyncProcess(currentSession);
+
+        int sleepSecs = currentSession.intervalSeconds > 0 ? currentSession.intervalSeconds : 5;
+        // Sleep in small 100ms steps to react to stopFlag quickly
+        for (int i = 0; i < sleepSecs * 10; ++i) {
             if (stopFlag->load()) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
